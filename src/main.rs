@@ -1,9 +1,9 @@
+mod control;
 mod dbus;
 mod hyprctl;
-mod control;
 
 use futures_lite::stream::StreamExt;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Orientation {
@@ -22,7 +22,7 @@ impl Orientation {
             _ => {
                 eprintln!("Unknown orientation: {}", s);
                 None
-            },
+            }
         }
     }
 }

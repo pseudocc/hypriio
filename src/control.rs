@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use std::fs;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -36,7 +36,6 @@ impl Config {
                 Ok(content) => match toml::from_str(&content) {
                     Ok(config) => return config,
                     Err(err) => eprintln!("Failed to parse config file: {}", err),
-
                 },
                 Err(err) => eprintln!("Failed to read config file: {}", err),
             }
@@ -59,4 +58,3 @@ impl Config {
         self.save()
     }
 }
-

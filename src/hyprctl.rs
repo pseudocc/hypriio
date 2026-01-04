@@ -23,9 +23,7 @@ impl Devices {
 }
 
 pub fn devices() -> Result<Devices, Box<dyn std::error::Error>> {
-    let output = Command::new("hyprctl")
-        .args(["devices", "-j"])
-        .output()?;
+    let output = Command::new("hyprctl").args(["devices", "-j"]).output()?;
 
     if !output.status.success() {
         return Err("Failed to execute hyprctl".into());
@@ -50,14 +48,13 @@ impl Rules {
     }
 
     pub fn add<R: Rule>(&mut self, rule: R) {
-        self.rules.push(format!("keyword {} {}", R::KEYWORD, rule.value()));
+        self.rules
+            .push(format!("keyword {} {}", R::KEYWORD, rule.value()));
     }
 
     pub fn exec(&self) -> Result<(), Box<dyn std::error::Error>> {
         let rules = self.rules.join(";");
-        let output = Command::new("hyprctl")
-            .args(["--batch", &rules])
-            .output()?;
+        let output = Command::new("hyprctl").args(["--batch", &rules]).output()?;
         if !output.status.success() {
             return Err("Failed to execute hyprctl".into());
         }
