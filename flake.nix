@@ -21,5 +21,13 @@
       rust.workspace = {
         cargo-nix = ./Cargo.nix;
       };
+
+      flake = {
+        nixosModules.default = import ./nixos-module.nix;
+        nixosModules.hypriio = import ./nixos-module.nix;
+
+        homeModules.default = import ./home-module.nix;
+        homeModules.hypriio = import ./home-module.nix;
+      };
     };
 }
