@@ -1,7 +1,11 @@
 mod dbus;
 mod hyprctl;
+mod control;
 
-#[derive(Debug, PartialEq)]
+use futures_lite::stream::StreamExt;
+use tokio::time::{sleep, Duration};
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Orientation {
     Normal,
     LeftUp,
@@ -41,6 +45,9 @@ impl Context {
     }
 
     pub fn unlock(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.is_locked {
+            return Ok(());
+        }
         self.is_locked = false;
         if let Some(orientation) = self.queued.take() {
             self.orient(orientation)?;
@@ -90,10 +97,12 @@ impl Context {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let conn = zbus::blocking::connection::Connection::system()?;
-    let proxy = dbus::SensorProxyBlocking::new(&conn)?;
-    proxy.claim_accelerometer()?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let conn = zbus::Connection::system().await?;
+    let proxy = dbus::SensorProxy::new(&conn).await?;
+
+    proxy.claim_accelerometer().await?;
     println!("Accelerometer claimed successfully.");
 
     let devices = hyprctl::devices()?;
@@ -102,35 +111,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let monitor = hyprctl::monitor("eDP-1")?;
     println!("Monitor: {:?}", monitor);
 
-    let orientation = proxy.accelerometer_orientation()?;
+    let orientation = proxy.accelerometer_orientation().await?;
     println!("Initial orientation: {}", orientation);
+
+    let config = control::Config::load();
 
     let mut context = Context {
         output: monitor,
         queued: None,
         now: Orientation::new(&orientation).unwrap(),
-        transforms: [0, 1, 2, 3],
-        is_locked: false,
+        transforms: config.transforms,
+        is_locked: config.lock,
         has_touch: devices.has_touch(),
         has_tablet: devices.has_tablet(),
     };
 
     println!("Listening for orientation changes...");
-    let mut props = proxy.receive_accelerometer_orientation_changed();
-    while let Some(prop) = props.next() {
-        let orientation = match prop.get() {
-            Err(_) => {
-                eprintln!("Failed to get orientation property.");
-                continue;
-            }
-            Ok(s) => match Orientation::new(&s) {
-                Some(o) => o,
-                None => continue,
+    let mut changes = proxy.receive_accelerometer_orientation_changed().await;
+
+    loop {
+        tokio::select! {
+            // Poll config file every 500ms
+            _ = sleep(Duration::from_millis(500)) => {
+                let config = control::Config::load();
+                if config.lock != context.is_locked {
+                    if config.lock {
+                        context.lock();
+                        println!("Orientation locked.");
+                    } else {
+                        context.unlock()?;
+                        println!("Orientation unlocked.");
+                    }
+                }
+                if config.transforms != context.transforms {
+                    context.transforms = config.transforms;
+                    println!("Transforms updated: {:?}", config.transforms);
+                }
             },
-        };
 
-        context.orient(orientation)?;
+            // Listen for orientation changes
+            Some(change) = changes.next() => {
+                let orientation = match change.get().await {
+                    Ok(s) => match Orientation::new(&s) {
+                        Some(o) => o,
+                        None => continue,
+                    },
+                    _ => {
+                        eprintln!("Failed to get orientation property.");
+                        continue;
+                    },
+                };
+
+                context.orient(orientation)?;
+            }
+        }
     }
-
-    Ok(())
 }
