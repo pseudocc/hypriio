@@ -32,6 +32,9 @@ impl Default for Config {
 
 impl Config {
     fn config_path() -> PathBuf {
+        if let Ok(path) = std::env::var("HYPRIIO_CONFIG") {
+            return PathBuf::from(path);
+        }
         let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/tmp"));
         PathBuf::from(home).join(".config/hypriio/config.toml")
     }
