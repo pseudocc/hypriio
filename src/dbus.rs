@@ -11,4 +11,3 @@ pub trait Sensor {
     #[zbus(property)]
     fn accelerometer_orientation(&self) -> zbus::Result<String>;
 }
-
