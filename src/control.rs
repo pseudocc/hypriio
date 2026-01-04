@@ -8,10 +8,16 @@ pub struct Config {
     pub transforms: [u8; 4],
     #[serde(default)]
     pub lock: bool,
+    #[serde(default = "default_output")]
+    pub output: String,
 }
 
 fn default_transforms() -> [u8; 4] {
     [0, 1, 2, 3]
+}
+
+fn default_output() -> String {
+    String::from("eDP-1")
 }
 
 impl Default for Config {
@@ -19,6 +25,7 @@ impl Default for Config {
         Self {
             transforms: default_transforms(),
             lock: false,
+            output: default_output(),
         }
     }
 }

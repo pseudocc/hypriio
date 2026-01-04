@@ -99,22 +99,22 @@ impl Context {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = control::Config::load();
+
+    let monitor = hyprctl::monitor(&config.output)?;
+    println!("Monitor: {:?}", monitor);
+
+    let devices = hyprctl::devices()?;
+    println!("Input devices: {:?}", devices);
+
     let conn = zbus::Connection::system().await?;
     let proxy = dbus::SensorProxy::new(&conn).await?;
 
     proxy.claim_accelerometer().await?;
     println!("Accelerometer claimed successfully.");
 
-    let devices = hyprctl::devices()?;
-    println!("Input devices: {:?}", devices);
-
-    let monitor = hyprctl::monitor("eDP-1")?;
-    println!("Monitor: {:?}", monitor);
-
     let orientation = proxy.accelerometer_orientation().await?;
     println!("Initial orientation: {}", orientation);
-
-    let config = control::Config::load();
 
     let mut context = Context {
         output: monitor,
@@ -134,6 +134,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Poll config file every 500ms
             _ = sleep(Duration::from_millis(500)) => {
                 let config = control::Config::load();
+                if config.output != context.output.name {
+                    eprintln!("Output changed in config file. Please restart the program to apply changes.");
+                }
+                if config.transforms != context.transforms {
+                    context.transforms = config.transforms;
+                    println!("Transforms updated: {:?}", config.transforms);
+                }
                 if config.lock != context.is_locked {
                     if config.lock {
                         context.lock();
@@ -142,10 +149,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         context.unlock()?;
                         println!("Orientation unlocked.");
                     }
-                }
-                if config.transforms != context.transforms {
-                    context.transforms = config.transforms;
-                    println!("Transforms updated: {:?}", config.transforms);
                 }
             },
 
