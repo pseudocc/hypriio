@@ -54,11 +54,13 @@ in {
     };
 
     xdg.configFile."hypriio/config.toml".text = let
+      toList = list: "[ ${lib.concatStringsSep ", " list} ]";
+      transforms = builtins.map toString cfg.settings.transforms;
       restart-services = builtins.map (s: "\"${s}\"") cfg.settings.restart-services;
     in lib.mkIf (cfg.settings != {}) ''
       output = "${cfg.settings.output}"
-      transforms = [ ${toString cfg.settings.transforms} ]
-      restart-services = [ ${toString restart-services} ]
+      transforms = ${toList transforms}
+      restart-services = [ ${toList restart-services} ]
     '';
 
     home.packages = [ cfg.package ];
