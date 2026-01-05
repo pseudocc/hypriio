@@ -105,12 +105,6 @@ impl Context {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let static_config = control::Static::load();
-    let config = control::Dynamic::load();
-
-    let monitor = hyprctl::monitor(&static_config.output)?;
-    println!("Monitor: {:?}", monitor);
-
     let devices = hyprctl::devices()?;
     println!("Input devices: {:?}", devices);
 
@@ -123,53 +117,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let orientation = proxy.accelerometer_orientation().await?;
     println!("Initial orientation: {}", orientation);
 
-    let mut context = Context {
-        output: monitor,
-        queued: None,
-        now: Orientation::new(&orientation).unwrap(),
-        transforms: config.transforms,
-        is_locked: config.lock,
-        has_touch: devices.has_touch(),
-        has_tablet: devices.has_tablet(),
-        restart_services: {
-            let mut services = Vec::new();
-            for service in static_config.restart_services {
-                if has_service(&service) {
-                    services.push(service);
+    let mut context = {
+        let config = control::Config::load();
+        let monitor = hyprctl::monitor(&config.output)?;
+        println!("Monitor: {:?}", monitor);
+
+        Context {
+            output: monitor,
+            queued: None,
+            now: Orientation::new(&orientation).unwrap(),
+            transforms: config.transforms,
+            is_locked: false,
+            has_touch: devices.has_touch(),
+            has_tablet: devices.has_tablet(),
+            restart_services: {
+                let mut services = Vec::new();
+                for service in config.restart_services {
+                    if has_service(&service) {
+                        services.push(service);
+                    }
                 }
-            }
-            services
-        },
+                services
+            },
+        }
     };
 
-    println!("Listening for orientation changes...");
+    println!("Listening for orientation changes and UNIX socket commands...");
     let mut changes = proxy.receive_accelerometer_orientation_changed().await;
+    let socket = control::socket::Server::bind()?;
 
     loop {
         tokio::select! {
-            _ = sleep(Duration::from_secs(1)) => {
-                let config = control::Dynamic::load();
-                let (mut orientation, mut force) = (None, false);
-                if config.transforms != context.transforms {
-                    context.transforms = config.transforms;
-                    println!("Transforms updated: {:?}", context.transforms);
-                    (orientation, force) = (Some(context.now), true);
-                }
-                if config.lock != context.is_locked {
-                    if config.lock {
+            Ok(mut conn) = socket.accept() => {
+                let lock = match conn.receive().await {
+                    None => continue,
+                    Some(control::socket::Command::Lock) => true,
+                    Some(control::socket::Command::Unlock) => false,
+                };
+                if lock != context.is_locked {
+                    if lock {
                         context.is_locked = true;
                         println!("Orientation locked.");
                     } else {
                         context.is_locked = false;
                         if let Some(queued) = context.queued {
                             context.queued = None;
-                            orientation = Some(queued);
+                            context.orient(queued, true)?;
                         }
                         println!("Orientation unlocked.");
                     }
-                }
-                if let Some(orientation) = orientation {
-                    context.orient(orientation, force)?;
                 }
             },
 

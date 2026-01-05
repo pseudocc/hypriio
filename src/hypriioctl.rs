@@ -10,9 +10,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let lock = match args[1].as_str() {
-        "lock" => true,
-        "unlock" => false,
+    let command = match args[1].as_str() {
+        "lock" => control::socket::Command::Lock,
+        "unlock" => control::socket::Command::Unlock,
         _ => {
             eprintln!("Invalid command: {}", args[1]);
             eprintln!("Usage: {} <lock|unlock>", args[0]);
@@ -20,9 +20,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let mut dynamic = control::Dynamic::load();
-    dynamic.set_lock(lock)?;
+    let mut socket = control::socket::Client::connect()?;
+    socket.send(command)?;
 
-    println!("Orientation {}", if lock { "locked" } else { "unlocked" });
+    println!("Orientation {}ed", args[1]);
     Ok(())
 }
