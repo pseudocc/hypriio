@@ -20,8 +20,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let mut config = control::Config::load();
-    config.set_lock(lock)?;
+    let mut dynamic = control::Dynamic::load();
+    dynamic.set_lock(lock)?;
 
     println!("Orientation {}", if lock { "locked" } else { "unlocked" });
     Ok(())

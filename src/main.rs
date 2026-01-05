@@ -27,6 +27,18 @@ impl Orientation {
     }
 }
 
+fn has_service(name: &str) -> bool {
+    match std::process::Command::new("systemctl")
+        .arg("--user")
+        .arg("is-active")
+        .arg(name)
+        .output()
+    {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
 struct Context {
     now: Orientation,
     queued: Option<Orientation>,
@@ -37,6 +49,8 @@ struct Context {
     is_locked: bool,
     has_touch: bool,
     has_tablet: bool,
+
+    restart_services: Vec<String>,
 }
 
 impl Context {
@@ -90,6 +104,14 @@ impl Context {
         }
         hyprctl.exec()?;
 
+        for service in &self.restart_services {
+            let _ = std::process::Command::new("systemctl")
+                .arg("--user")
+                .arg("restart")
+                .arg(service)
+                .status();
+        }
+
         println!("Orientation changed {:?} -> {:?}", self.now, orientation);
         self.now = orientation;
 
@@ -99,9 +121,9 @@ impl Context {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = control::Config::load();
+    let hardware = control::Hardware::load();
 
-    let monitor = hyprctl::monitor(&config.output)?;
+    let monitor = hyprctl::monitor(&hardware.output)?;
     println!("Monitor: {:?}", monitor);
 
     let devices = hyprctl::devices()?;
@@ -120,10 +142,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output: monitor,
         queued: None,
         now: Orientation::new(&orientation).unwrap(),
-        transforms: config.transforms,
-        is_locked: config.lock,
+        transforms: hardware.transforms,
+        is_locked: false,
         has_touch: devices.has_touch(),
         has_tablet: devices.has_tablet(),
+        restart_services: Vec::new(),
     };
 
     println!("Listening for orientation changes...");
@@ -131,16 +154,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         tokio::select! {
-            // Poll config file every 500ms
-            _ = sleep(Duration::from_millis(500)) => {
-                let config = control::Config::load();
-                if config.output != context.output.name {
-                    eprintln!("Output changed in config file. Please restart the program to apply changes.");
-                }
-                if config.transforms != context.transforms {
-                    context.transforms = config.transforms;
-                    println!("Transforms updated: {:?}", config.transforms);
-                }
+            _ = sleep(Duration::from_secs(1)) => {
+                let config = control::Dynamic::load();
+                context.restart_services = {
+                    let mut services = Vec::new();
+                    for service in context.restart_services {
+                        if has_service(&service) {
+                            services.push(service);
+                        }
+                    }
+                    services
+                };
                 if config.lock != context.is_locked {
                     if config.lock {
                         context.lock();
@@ -152,7 +176,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             },
 
-            // Listen for orientation changes
             Some(change) = changes.next() => {
                 let orientation = match change.get().await {
                     Ok(s) => match Orientation::new(&s) {
