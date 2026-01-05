@@ -3,72 +3,55 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Hardware {
+pub struct Static {
     #[serde(default = "default_output")]
     pub output: String,
-    #[serde(default = "default_transforms")]
-    pub transforms: [u8; 4],
-}
-
-fn default_transforms() -> [u8; 4] {
-    [0, 1, 2, 3]
+    #[serde(default)]
+    pub restart_services: Vec<String>,
 }
 
 fn default_output() -> String {
     String::from("eDP-1")
 }
 
-impl Default for Hardware {
+impl Default for Static {
     fn default() -> Self {
         Self {
             output: default_output(),
-            transforms: default_transforms(),
+            restart_services: Vec::new(),
         }
     }
+}
+
+fn default_transforms() -> [u8; 4] {
+    [0, 1, 2, 3]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dynamic {
     #[serde(default)]
     pub lock: bool,
-    #[serde(default)]
-    pub restart_services: Vec<String>,
+    #[serde(default = "default_transforms")]
+    pub transforms: [u8; 4],
 }
 
 impl Default for Dynamic {
     fn default() -> Self {
         Self {
             lock: false,
-            restart_services: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ConfigFile {
-    #[serde(flatten)]
-    hardware: Hardware,
-    #[serde(flatten)]
-    dynamic: Dynamic,
-}
-
-impl Default for ConfigFile {
-    fn default() -> Self {
-        Self {
-            hardware: Hardware::default(),
-            dynamic: Dynamic::default(),
+            transforms: default_transforms(),
         }
     }
 }
 
 enum Role {
-    Hardware,
+    Static,
     Dynamic,
 }
 
 fn config_path(role: Role) -> PathBuf {
     let key = match role {
-        Role::Hardware => "HYPRIIO_HARDWARE",
+        Role::Static => "HYPRIIO_STATIC",
         Role::Dynamic => "HYPRIIO_CONFIG",
     };
     if let Ok(path) = std::env::var(key) {
@@ -76,19 +59,19 @@ fn config_path(role: Role) -> PathBuf {
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/tmp"));
     let file_name = match role {
-        Role::Hardware => "hardware.toml",
+        Role::Static => "static.toml",
         Role::Dynamic => "config.toml",
     };
-    PathBuf::from(home).join(".config").join("hypriioctl").join(file_name)
+    PathBuf::from(home).join(".config").join("hypriio").join(file_name)
 }
 
-impl Hardware {
+impl Static {
     pub fn load() -> Self {
-        let path = config_path(Role::Hardware);
+        let path = config_path(Role::Static);
         if path.exists() {
             match fs::read_to_string(&path) {
-                Ok(content) => match toml::from_str::<ConfigFile>(&content) {
-                    Ok(config) => return config.hardware,
+                Ok(content) => match toml::from_str::<Self>(&content) {
+                    Ok(config) => return config,
                     Err(err) => eprintln!("Failed to parse config file: {}", err),
                 },
                 Err(err) => eprintln!("Failed to read config file: {}", err),
@@ -103,8 +86,8 @@ impl Dynamic {
         let path = config_path(Role::Dynamic);
         if path.exists() {
             match fs::read_to_string(&path) {
-                Ok(content) => match toml::from_str::<ConfigFile>(&content) {
-                    Ok(config) => return config.dynamic,
+                Ok(content) => match toml::from_str::<Self>(&content) {
+                    Ok(config) => return config,
                     Err(err) => eprintln!("Failed to parse config file: {}", err),
                 },
                 Err(err) => eprintln!("Failed to read config file: {}", err),
@@ -115,15 +98,10 @@ impl Dynamic {
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
         let path = config_path(Role::Dynamic);
-        let hardware = Hardware::load();
-        let config_file = ConfigFile {
-            hardware,
-            dynamic: self.clone(),
-        };
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(&config_file)?;
+        let content = toml::to_string_pretty(&self)?;
         fs::write(&path, content)?;
         Ok(())
     }

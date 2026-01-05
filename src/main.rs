@@ -54,29 +54,13 @@ struct Context {
 }
 
 impl Context {
-    pub fn lock(&mut self) {
-        self.is_locked = true;
-    }
-
-    pub fn unlock(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if !self.is_locked {
-            return Ok(());
-        }
-        self.is_locked = false;
-        if let Some(orientation) = self.queued.take() {
-            self.orient(orientation)?;
-            self.queued = None;
-        }
-        Ok(())
-    }
-
-    pub fn orient(&mut self, orientation: Orientation) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn orient(&mut self, orientation: Orientation, force: bool) -> Result<(), Box<dyn std::error::Error>> {
         if self.is_locked {
             self.queued = Some(orientation);
             return Ok(());
         }
 
-        if self.now == orientation {
+        if self.now == orientation && !force {
             return Ok(());
         }
 
@@ -121,9 +105,10 @@ impl Context {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let hardware = control::Hardware::load();
+    let static_config = control::Static::load();
+    let config = control::Dynamic::load();
 
-    let monitor = hyprctl::monitor(&hardware.output)?;
+    let monitor = hyprctl::monitor(&static_config.output)?;
     println!("Monitor: {:?}", monitor);
 
     let devices = hyprctl::devices()?;
@@ -142,11 +127,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output: monitor,
         queued: None,
         now: Orientation::new(&orientation).unwrap(),
-        transforms: hardware.transforms,
-        is_locked: false,
+        transforms: config.transforms,
+        is_locked: config.lock,
         has_touch: devices.has_touch(),
         has_tablet: devices.has_tablet(),
-        restart_services: Vec::new(),
+        restart_services: {
+            let mut services = Vec::new();
+            for service in static_config.restart_services {
+                if has_service(&service) {
+                    services.push(service);
+                }
+            }
+            services
+        },
     };
 
     println!("Listening for orientation changes...");
@@ -156,23 +149,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             _ = sleep(Duration::from_secs(1)) => {
                 let config = control::Dynamic::load();
-                context.restart_services = {
-                    let mut services = Vec::new();
-                    for service in context.restart_services {
-                        if has_service(&service) {
-                            services.push(service);
-                        }
-                    }
-                    services
-                };
+                let (mut orientation, mut force) = (None, false);
+                if config.transforms != context.transforms {
+                    context.transforms = config.transforms;
+                    println!("Transforms updated: {:?}", context.transforms);
+                    (orientation, force) = (Some(context.now), true);
+                }
                 if config.lock != context.is_locked {
                     if config.lock {
-                        context.lock();
+                        context.is_locked = true;
                         println!("Orientation locked.");
                     } else {
-                        context.unlock()?;
+                        context.is_locked = false;
+                        if let Some(queued) = context.queued {
+                            context.queued = None;
+                            orientation = Some(queued);
+                        }
                         println!("Orientation unlocked.");
                     }
+                }
+                if let Some(orientation) = orientation {
+                    context.orient(orientation, force)?;
                 }
             },
 
@@ -188,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                 };
 
-                context.orient(orientation)?;
+                context.orient(orientation, false)?;
             }
         }
     }
