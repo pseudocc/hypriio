@@ -12,6 +12,24 @@ in {
       defaultText = lib.literalExpression "pkgs.hypriio";
       description = "The hypriio package to use.";
     };
+
+    settings.restart-services = lib.mkOption {
+      type = with lib.types; listOf str;
+      default = [];
+      description = "A list of services to restart when orientation changes.";
+    };
+
+    settings.output = lib.mkOption {
+      type = lib.types.str;
+      default = "auto";
+      description = "The output to monitor for orientation changes.";
+    };
+
+    settings.transforms = lib.mkOption {
+      type = with lib.types; listOf int;
+      default = [ 0 1 2 3 ];
+      description = "hyprland transforms to apply the rotation to.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -34,6 +52,15 @@ in {
         WantedBy = [ "graphical-session.target" ];
       };
     };
+
+    xdg.configFile."hypriio/config.toml".text = let
+      restart-services = builtins.map (s: "\"${s}\"") cfg.settings.restart-services;
+    in lib.mkIf (cfg.settings != {}) ''
+      output = "${cfg.settings.output}"
+      transforms = [ ${toString cfg.settings.transforms} ]
+      restart-services = [ ${toString restart-services} ]
+    '';
+
     home.packages = [ cfg.package ];
   };
 }
