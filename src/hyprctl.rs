@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::process::Command;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Device {
     pub address: String,
     pub name: String,
@@ -14,11 +14,12 @@ pub struct Devices {
 }
 
 impl Devices {
-    pub fn has_touch(&self) -> bool {
-        !self.touch.is_empty()
+    pub fn touch(&self) -> &[Device] {
+        &self.touch
     }
-    pub fn has_tablet(&self) -> bool {
-        !self.tablets.is_empty()
+
+    pub fn tablets(&self) -> &[Device] {
+        &self.tablets
     }
 }
 
@@ -34,31 +35,36 @@ pub fn devices() -> Result<Devices, Box<dyn std::error::Error>> {
 }
 
 pub trait Rule {
-    const KEYWORD: &'static str;
-    fn value(&self) -> String;
+    fn expression(&self) -> String;
 }
 
 pub struct Rules {
-    rules: Vec<String>,
+    expressions: Vec<String>,
 }
 
 impl Rules {
     pub fn new() -> Self {
-        Self { rules: Vec::new() }
+        Self {
+            expressions: Vec::new(),
+        }
     }
 
     pub fn add<R: Rule>(&mut self, rule: R) {
-        self.rules
-            .push(format!("keyword {} {}", R::KEYWORD, rule.value()));
+        self.expressions.push(rule.expression());
     }
 
     pub fn exec(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let rules = self.rules.join(";");
-        let output = Command::new("hyprctl").args(["--batch", &rules]).output()?;
-        if !output.status.success() {
-            return Err("Failed to execute hyprctl".into());
-        }
-        Ok(())
+        self.expressions.iter().try_for_each(|expression| {
+            let output = Command::new("hyprctl")
+                .args(["eval", expression])
+                .output()?;
+
+            output
+                .status
+                .success()
+                .then_some(())
+                .ok_or_else(|| "Failed to execute hyprctl".into())
+        })
     }
 }
 
@@ -97,35 +103,79 @@ impl<'a> MonitorTransform<'a> {
     }
 }
 impl Rule for MonitorTransform<'_> {
-    const KEYWORD: &'static str = "monitor";
-
-    fn value(&self) -> String {
-        format!("{},transform,{}", self.0.name, self.1)
+    fn expression(&self) -> String {
+        format!(
+            "hl.monitor {{ output = {}, transform = {} }}",
+            lua_string(&self.0.name),
+            self.1
+        )
     }
 }
 
-pub struct TouchDeviceTransform(u8);
-impl TouchDeviceTransform {
-    pub fn new(transform: u8) -> Self {
-        Self(transform)
+pub struct TouchDeviceTransform<'a>(&'a Device, u8);
+impl<'a> TouchDeviceTransform<'a> {
+    pub fn new(device: &'a Device, transform: u8) -> Self {
+        Self(device, transform)
     }
 }
-impl Rule for TouchDeviceTransform {
-    const KEYWORD: &'static str = "input:touchdevice:transform";
-    fn value(&self) -> String {
-        format!("{}", self.0)
+impl Rule for TouchDeviceTransform<'_> {
+    fn expression(&self) -> String {
+        format!(
+            "hl.device {{ name = {}, transform = {} }}",
+            lua_string(&self.0.name),
+            self.1
+        )
     }
 }
 
-pub struct TabletTransform(u8);
-impl TabletTransform {
-    pub fn new(transform: u8) -> Self {
-        Self(transform)
+pub struct TabletTransform<'a>(&'a Device, u8);
+impl<'a> TabletTransform<'a> {
+    pub fn new(device: &'a Device, transform: u8) -> Self {
+        Self(device, transform)
     }
 }
-impl Rule for TabletTransform {
-    const KEYWORD: &'static str = "input:tablet:transform";
-    fn value(&self) -> String {
-        format!("{}", self.0)
+impl Rule for TabletTransform<'_> {
+    fn expression(&self) -> String {
+        format!(
+            "hl.device {{ name = {}, transform = {} }}",
+            lua_string(&self.0.name),
+            self.1
+        )
+    }
+}
+
+fn lua_string(value: &str) -> String {
+    format!("{:?}", value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transform_expressions() {
+        let monitor = Monitor {
+            id: 1,
+            name: "eDP-1".into(),
+            description: String::new(),
+            disabled: false,
+        };
+        let device = Device {
+            address: String::new(),
+            name: "Wacom \"Pen\"".into(),
+        };
+
+        assert_eq!(
+            MonitorTransform::new(&monitor, 1).expression(),
+            "hl.monitor { output = \"eDP-1\", transform = 1 }"
+        );
+        assert_eq!(
+            TouchDeviceTransform::new(&device, 3).expression(),
+            "hl.device { name = \"Wacom \\\"Pen\\\"\", transform = 3 }"
+        );
+        assert_eq!(
+            TabletTransform::new(&device, 2).expression(),
+            "hl.device { name = \"Wacom \\\"Pen\\\"\", transform = 2 }"
+        );
     }
 }

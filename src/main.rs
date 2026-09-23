@@ -47,14 +47,18 @@ struct Context {
     transforms: [u8; 4],
 
     is_locked: bool,
-    has_touch: bool,
-    has_tablet: bool,
+    touch_devices: Vec<hyprctl::Device>,
+    tablet_devices: Vec<hyprctl::Device>,
 
     restart_services: Vec<String>,
 }
 
 impl Context {
-    pub fn orient(&mut self, orientation: Orientation, force: bool) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn orient(
+        &mut self,
+        orientation: Orientation,
+        force: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if self.is_locked {
             self.queued = Some(orientation);
             return Ok(());
@@ -78,14 +82,12 @@ impl Context {
             let monitor_transform = hyprctl::MonitorTransform::new(&self.output, transform);
             hyprctl.add(monitor_transform);
         }
-        if self.has_touch {
-            let touch_transform = hyprctl::TouchDeviceTransform::new(transform);
-            hyprctl.add(touch_transform);
-        }
-        if self.has_tablet {
-            let tablet_transform = hyprctl::TabletTransform::new(transform);
-            hyprctl.add(tablet_transform);
-        }
+        self.touch_devices
+            .iter()
+            .for_each(|device| hyprctl.add(hyprctl::TouchDeviceTransform::new(device, transform)));
+        self.tablet_devices
+            .iter()
+            .for_each(|device| hyprctl.add(hyprctl::TabletTransform::new(device, transform)));
         hyprctl.exec()?;
 
         for service in &self.restart_services {
@@ -128,8 +130,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             now: Orientation::new(&orientation).unwrap(),
             transforms: config.transforms,
             is_locked: false,
-            has_touch: devices.has_touch(),
-            has_tablet: devices.has_tablet(),
+            touch_devices: devices.touch().to_vec(),
+            tablet_devices: devices.tablets().to_vec(),
             restart_services: {
                 let mut services = Vec::new();
                 for service in config.restart_services {
